@@ -24,55 +24,62 @@ final class ProtocolConformanceReferenceBuilder: SourceGraphVisitor {
         var newReferences: Set<Reference> = []
         let protocols = graph.declarations(ofKind: .protocol)
 
+        let dispatchGroup = DispatchGroup()
         for proto in protocols {
             // Find all classes that implement this protocol.
-            let conformingClasses = graph.declarations(ofKind: .class).filter {
-                $0.related.contains { proto.usrs.contains($0.usr) }
-            }
-
-            for conformingClass in conformingClasses {
-                // Find declarations defined by the protocol not defined in the class.
-                let unimplementedProtoDecls = proto.declarations.filter { protoDeclaration in
-                    !conformingClass.declarations.contains { clsDeclaration in
-                        protoDeclaration.kind == clsDeclaration.kind &&
-                            protoDeclaration.name == clsDeclaration.name
-                    }
+            let allClasses = graph.declarations(ofKind: .class)
+            dispatchGroup.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let conformingClasses = allClasses.filter {
+                    $0.related.contains { proto.usrs.contains($0.usr) }
                 }
-
-                if !unimplementedProtoDecls.isEmpty {
-                    // Find all superclasses.
-                    let superclassDecls = graph.inheritedTypeReferences(of: conformingClass)
-                        .filter { $0.kind == .class }
-                        .compactMap { graph.explicitDeclaration(withUsr: $0.usr) }
-                        .flatMap { $0.declarations }
-
-                    for unimplementedProtoDecl in unimplementedProtoDecls {
-                        // Find the implementation declaration in a superclass.
-                        let declInSuperclass = superclassDecls.first {
-                            $0.kind == unimplementedProtoDecl.kind &&
-                            $0.name == unimplementedProtoDecl.name
+                
+                for conformingClass in conformingClasses {
+                    // Find declarations defined by the protocol not defined in the class.
+                    let unimplementedProtoDecls = proto.declarations.filter { protoDeclaration in
+                        !conformingClass.declarations.contains { clsDeclaration in
+                            protoDeclaration.kind == clsDeclaration.kind &&
+                            protoDeclaration.name == clsDeclaration.name
                         }
-
-                        if let declInSuperclass = declInSuperclass {
-                            // Build a reference from the protocol declarations to the
-                            // declaration implemented by the superclass.
-                            guard let referenceKind = declInSuperclass.kind.referenceEquivalent else { continue }
-
-                            for usr in declInSuperclass.usrs {
-                                let reference = Reference(kind: referenceKind,
-                                                          usr: usr,
-                                                          location: declInSuperclass.location)
-                                reference.name = declInSuperclass.name
-                                reference.isRelated = true
-                                reference.parent = unimplementedProtoDecl
-                                graph.add(reference, from: unimplementedProtoDecl)
-                                newReferences.insert(reference)
+                    }
+                    
+                    if !unimplementedProtoDecls.isEmpty {
+                        // Find all superclasses.
+                        let superclassDecls = self.graph.inheritedTypeReferences(of: conformingClass)
+                            .filter { $0.kind == .class }
+                            .compactMap { self.graph.explicitDeclaration(withUsr: $0.usr) }
+                            .flatMap { $0.declarations }
+                        
+                        for unimplementedProtoDecl in unimplementedProtoDecls {
+                            // Find the implementation declaration in a superclass.
+                            let declInSuperclass = superclassDecls.first {
+                                $0.kind == unimplementedProtoDecl.kind &&
+                                $0.name == unimplementedProtoDecl.name
+                            }
+                            
+                            if let declInSuperclass = declInSuperclass {
+                                // Build a reference from the protocol declarations to the
+                                // declaration implemented by the superclass.
+                                guard let referenceKind = declInSuperclass.kind.referenceEquivalent else { continue }
+                                
+                                for usr in declInSuperclass.usrs {
+                                    let reference = Reference(kind: referenceKind,
+                                                              usr: usr,
+                                                              location: declInSuperclass.location)
+                                    reference.name = declInSuperclass.name
+                                    reference.isRelated = true
+                                    reference.parent = unimplementedProtoDecl
+                                    self.graph.add(reference, from: unimplementedProtoDecl)
+                                    newReferences.insert(reference)
+                                }
                             }
                         }
                     }
                 }
+                dispatchGroup.leave()
             }
         }
+        dispatchGroup.wait()
 
         return newReferences
     }

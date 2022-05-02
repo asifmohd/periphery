@@ -18,9 +18,15 @@ final class UnusedParameterRetainer: SourceGraphVisitor {
         let paramDecls = graph.declarations(ofKind: .varParameter)
         let functionDecls: Set<Declaration> = Set(paramDecls.compactMap { $0.parent })
 
+        let dispatchGroup = DispatchGroup()
         for functionDecl in functionDecls {
-            retainIfNeeded(params: functionDecl.unusedParameters, inMethod: functionDecl)
+            dispatchGroup.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.retainIfNeeded(params: functionDecl.unusedParameters, inMethod: functionDecl)
+                dispatchGroup.leave()
+            }
         }
+        dispatchGroup.wait()
 
         let protocolDecls = graph.declarations(ofKind: .protocol)
 
