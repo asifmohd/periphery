@@ -134,7 +134,24 @@ extension XcodeProjectDriver: ProjectDriver {
             storePath = try xcodebuild.indexStorePath(project: project, schemes: Array(schemes))
         }
 
-        try targets.forEach { try $0.identifyFiles() }
+        
+        let dispatchGroup = DispatchGroup()
+        var errors: [Error] = []
+        targets.forEach { (target) in
+            dispatchGroup.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try target.identifyFiles()
+                } catch let error {
+                    errors.append(error)
+                }
+                dispatchGroup.leave()
+            }
+        }
+        dispatchGroup.wait()
+        if let firstError = errors.first {
+            throw firstError
+        }
 
         let sourceFiles = targets.reduce(into: [FilePath: [String]]()) { result, target in
             target.files(kind: .swift).forEach { result[$0, default: []].append(target.name) }
